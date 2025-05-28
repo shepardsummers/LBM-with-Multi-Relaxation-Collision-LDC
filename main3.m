@@ -1,61 +1,59 @@
-%%
-% Lid Driven Cavity Flow
-% Latice Boltzmann Method + Multi-Relaxation Collision model
-%% Initialization
-clc, clear;
+%% Definition of Parameters
+clear, clc;
 
-N_x = 200;
-N_y = N_x;
-dx = 1;
-dy = dx;
+% Domain Related
+N_x = 100; % num of x nodes
+%6451
+N_y = N_x; % num of y nodes
+d_x = 1; % dist between x nodes
+d_y = 1; % dist between y nodes
 
+% LBM Related
+% Lattice velocity
 ksi = [0 1 0 -1 0 1 -1 -1 1; ...
-       0 0 1 0 -1 1 1 -1 -1 ]; % Lattice velocity
-w = [4/9 1/9 1/9 1/9 1/9 1/36 1/36 1/36 1/36]'; % weights for D2Q9
+       0 0 1 0 -1 1 1 -1 -1 ];
 
-Re = 100; % Renold's number
-c_s = 1/sqrt(3); % speed of sound
-tau = 1.2;
-s_89 = 1.2; % 8 & 9th relaxation times
-%vis = (tau - 0.5)*c_s^2; % kinematic viscosity
-vis = (1/s_89 - 0.5)/(c_s^2);
-U_top = Re*vis/N_x; % top velocity
-Mach = U_top/c_s; % Mach number
+w = [4/9 1/9 1/9 1/9 1/9 1/36 1/36 1/36 1/36]; % weights for D2Q9
 
-S = diag([0; 1.19; 1.4; 0; 1.2; 0; 1.2; s_89; s_89]); % relaxation vector
+c_s = 1/sqrt(3); % speed of sound (D2Q9)
 
-M = [ 1,  1,  1,  1,  1,  1,  1,  1,  1; ... 
-     -4, -1, -1, -1, -1,  2,  2,  2,  2; ...
-      4, -2, -2, -2, -2,  1,  1,  1,  1; ... 
-      0,  1,  0, -1,  0,  1, -1, -1,  1; ... 
-      0, -2,  0,  2,  0,  1, -1, -1,  1; ... 
-      0,  0,  1,  0, -1,  1,  1, -1, -1; ... 
-      0,  0, -2,  0,  2,  1,  1, -1, -1; ... 
-      0,  1, -1,  1, -1,  0,  0,  0,  0; ... 
-      0,  0,  0,  0,  0,  1, -1,  1, -1; ... 
-     ]; % transformation matrix
+Tau = 0.573; % relaxation time
+Rho_in = 2;
+vis = (Tau-0.5) * c_s^2; % kinematic viscosity
+Re = 100; % Reanolds number
+L = N_x; % Length of box
+U_top = Re*vis/L; % Top velocity
+min_error = 0.000001; % error when sim ends
 
-rho_init = 2;
-Rho = ones(1, N_y, N_x)*rho_init; % density
-U = zeros(2, N_y, N_x); % velocity
+%% Initialization
+Rho_ref=2;
+Rho = ones(1, N_y, N_x)*Rho_ref; % Density
+U = zeros(2, N_y, N_x); % Velocity
 
 f = zeros(9, N_y, N_x); % PDF for all 9 directions at all locations
 
-f_new = f; % update variable
-f_eq = f; % equilibrium PDF
+f = eqm_d2q9(Rho, U, ksi, w);
+
+f_new = f; % Update variable
+f_eq = f; % Equilibrium
+
+timer = 0;
+max_timer = 10000;
+cont = true;
+%figure
+%r = animatedline;
+%title("Residuals")
+
+
+%% Solving
+tic
+res_list = zeros(1, max_timer);
 
 % Interior nodes
 int_x = 2:(N_x-1);
-int_y = 2:(N_y-1);
+int_y = 2:(N_x-1);
 
-super_guh = zeros(9, 100, 100); % temp
-
-%% Timer
-timer = 500;
-tic;
-%% Solving
-% Streaming
-for t = 1:timer
+for t = 1:max_timer
     % Streaming / Boundary Conditions
     % Top left
     f_new(1, 1, 1) = f(1, 1  , 1  );
@@ -169,51 +167,23 @@ for t = 1:timer
     f_new(9, int_y, int_x) = f(9, int_y-1, int_x-1);
 
     % Collision
-    % m = pagemtimes(M, f_new);
+    Rho_old = Rho;
+    % Rho, U calculation
+    [Rho, U] = rhoNu(f_new, ksi);
+    % f_eq calculation
+    f_eq = eqm_d2q9(Rho, U, ksi, w);
 
-    %Rho = m(1, :, :);
+    % BGK Collision and Update
+    f = f_new - (f_new-f_eq)/Tau;
 
-    Rho = sum(f_new, 1);
-    U = pagemtimes(ksi,f_new)./Rho;
-
-    % U(1,:,:) = m(4,:,:);
-    % U(2,:,:) = m(5,:,:);
-
-    % super_guh(1,:,:) = ones(1, 100, 100);
-    % super_guh(2,:,:) = -2 + 3*sum(U.^2, 1);
-    % super_guh(3,:,:) = 1 - 3*sum(U.^2, 1);
-    % super_guh(4,:,:) = U(1,:,:);
-    % super_guh(5,:,:) = -U(1,:,:);
-    % super_guh(6,:,:) = U(2,:,:);
-    % super_guh(7,:,:) = -U(2,:,:);
-    % super_guh(8,:,:) = U(1,:,:).^2 - U(2,:,:).^2;
-    % super_guh(9,:,:) = U(1,:,:).*U(2,:,:);
-
-    % m_eq(1,:,:)=Rho;
-    % m_eq(2,:,:)=Rho.*(-2+3*sum(U.*U,1));
-    % m_eq(3,:,:)=Rho.*(1-3*sum(U.*U,1));
-    % m_eq(4,:,:)=Rho.*U(1,:,:);
-    % m_eq(5,:,:)=-Rho.*U(1,:,:);
-    % m_eq(6,:,:)=Rho.*U(2,:,:);
-    % m_eq(7,:,:)=-Rho.*U(2,:,:);
-    % m_eq(8,:,:)=Rho.*(U(1,:,:).*U(1,:,:)-U(2,:,:).*U(2,:,:));
-    % m_eq(9,:,:)=Rho.*(U(1,:,:).*U(2,:,:));
-    % 
-    % %m_eq = Rho.*super_guh;
-    % 
-    % %phi = -pagemtimes(pagemtimes(inv(M),S), (m-m_eq));
-    % 
-    % %f = f_new + phi;
-    % f=f_new-pagemtimes(pagemtimes(inv(M),S),(pagemtimes(M,f_new)-m_eq));
+    [guh, res_list(t)] = res(Rho_old, Rho, min_error);
     
+    %addpoints(r, t, max_error)
+    %drawnow
 
-    f_eq = pagemtimes(w,Rho).*(1 + 3*pagemtimes(ksi',U) + 9/2*(pagemtimes(ksi', U).^2) - 3/2*sum(U.*U,1));
-    % BGK Collision & Update
-    f=f_new-(f_new-f_eq)/tau;
-
-    fprintf("Itt: %i\n", t);
+    %progress(timer, t);
+    fprintf("Itt: %i     ||     Res: %.4e\n", t, res_list(t))
 end
-%% Display
 total_time = toc;
 %% Post-Processing / Visualization
 clc;
@@ -230,16 +200,16 @@ mid = N_x/2;
 Vertical_Sample = U(1, :, mid)/U_top;
 Horizontal_Sample = U(2, mid, :)/U_top;
 
-u2_Ghia = [1 0.48223 0.46120 0.45992 0.46036 0.33556 0.20087 0.08183 -0.03039 -0.07404 -0.22855 -0.33050 -0.40435 -0.43643 -0.42901 -0.41165 0.00000 ];
-v2_Ghia = [0.00000 -0.49774 -0.55069 -0.55408 -0.52876 -0.41442 -0.36214 -0.30018 0.00945 0.27280 0.28066 0.35368 0.42951 0.43648 0.43329 0.42447 0.00000];
+%u2_Ghia = [1 0.48223 0.46120 0.45992 0.46036 0.33556 0.20087 0.08183 -0.03039 -0.07404 -0.22855 -0.33050 -0.40435 -0.43643 -0.42901 -0.41165 0.00000 ];
+%v2_Ghia = [0.00000 -0.49774 -0.55069 -0.55408 -0.52876 -0.41442 -0.36214 -0.30018 0.00945 0.27280 0.28066 0.35368 0.42951 0.43648 0.43329 0.42447 0.00000];
 
 figure
-plot(squeeze(Vertical_Sample), flip((1:N_y)/N_y), flip(u2_Ghia), flip(y_Ghia))
+plot(squeeze(Vertical_Sample), flip((1:L)/L), "black", flip(u_Ghia), flip(y_Ghia))
 title("Vertical Sample (U)")
 xlabel("u")
 ylabel("y")
 figure
-plot((1:N_x)/N_x, squeeze(Horizontal_Sample), flip(x_Ghia), flip(v2_Ghia))
+plot((1:L)/L, squeeze(Horizontal_Sample), "black", flip(x_Ghia), flip(v_Ghia));
 title("Horizontal Sample (V)")
 xlabel("x")
 ylabel("v")
